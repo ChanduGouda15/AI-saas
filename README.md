@@ -1,6 +1,6 @@
-# ContentForge
+# CreatorHub
 
-ContentForge is a full-stack AI-powered content generation platform for creating articles, images, and more using integrated AI APIs.
+CreatorHub is a full-stack AI-powered content generation platform for creating articles, images, and more using integrated AI APIs.
 
 ## Installation
 
