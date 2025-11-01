@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { dummyCreationData } from '../assets/assets'
 import { Gem, Sparkles } from 'lucide-react'
-import { Protect, useAuth } from '@clerk/clerk-react'
+import { useAuth, useUser } from '@clerk/clerk-react'
 import CreationItem from '../components/CreationItem'
 import axios from 'axios'
 import toast from 'react-hot-toast'
@@ -13,6 +13,10 @@ const Dashboard = () => {
   const [creations, setCreations] = useState([])
   const [loading, setLoading] = useState(true)
   const { getToken } = useAuth()
+  const { user } = useUser()
+
+  // Check premium status from public metadata
+  const isPremium = user?.publicMetadata?.plan === 'premium'
 
   const getDashboardData = async ()=>{
     try {
@@ -54,7 +58,7 @@ const Dashboard = () => {
             <div className='text-slate-600'>
               <p className='text-sm'>Active Plan</p>
               <h2 className='text-xl font-semibold'>
-                <Protect plan='premium' fallback="Free">Premium</Protect>
+                {isPremium ? 'Premium' : 'Free'}
               </h2>
             </div>
             <div className='w-10 h-10 rounded-lg bg-gradient-to-br from-[#FF61C5] to-[#9E53EE] text-white flex justify-center items-center'>
