@@ -106,18 +106,12 @@ export const generateImage = async (req, res)=>{
             return res.json({ success: false, message: "This feature is only available for premium subscriptions"})
         }
 
-        
-        const formData = new FormData()
-        formData.append('prompt', prompt)
-        const {data} = await axios.post("https://clipdrop-api.co/text-to-image/v1", formData, {
-            headers: {'x-api-key': process.env.CLIPDROP_API_KEY,},
-            responseType: "arraybuffer",
-        })
+        // Using Pollinations.ai - FREE alternative (no API key needed)
+        const encodedPrompt = encodeURIComponent(prompt);
+        const imageUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1024&height=1024&nologo=true`;
 
-        const base64Image = `data:image/png;base64,${Buffer.from(data, 'binary').toString('base64')}`;
-
-        const {secure_url} = await cloudinary.uploader.upload(base64Image)
-        
+        // Upload to Cloudinary for permanent storage
+        const {secure_url} = await cloudinary.uploader.upload(imageUrl);
 
         await sql` INSERT INTO creations (user_id, prompt, content, type, publish) 
         VALUES (${userId}, ${prompt}, ${secure_url}, 'image', ${publish ?? false })`;
