@@ -106,19 +106,15 @@ export const generateImage = async (req, res)=>{
             return res.json({ success: false, message: "This feature is only available for premium subscriptions"})
         }
 
-        console.log('=== Starting image generation ===');
-        console.log('Prompt:', prompt);
-        console.log('API Key present:', !!process.env.HUGGINGFACE_API_KEY);
-        console.log('API Key starts with hf_:', process.env.HUGGINGFACE_API_KEY?.startsWith('hf_'));
+        console.log('Generating image for prompt:', prompt);
 
-        // Using Stable Diffusion 2.1 (faster and more reliable)
+        // Using runwayml/stable-diffusion-v1-5 (always available, no 404)
         const response = await axios.post(
-            'https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-2-1',
+            'https://api-inference.huggingface.co/models/runwayml/stable-diffusion-v1-5',
             { 
                 inputs: prompt,
                 options: {
-                    wait_for_model: true,
-                    use_cache: false
+                    wait_for_model: true
                 }
             },
             {
@@ -127,76 +123,38 @@ export const generateImage = async (req, res)=>{
                     'Content-Type': 'application/json',
                 },
                 responseType: 'arraybuffer',
-                timeout: 90000,
-                validateStatus: function (status) {
-                    return status < 600; // Don't throw on any status
-                }
+                timeout: 120000
             }
         );
 
         console.log('Response status:', response.status);
-        console.log('Response content-type:', response.headers['content-type']);
-
-        // Check for errors
-        if (response.status === 401) {
-            console.error('Authentication failed - check your API key');
-            return res.json({
-                success: false, 
-                message: "Invalid Hugging Face API key. Please verify your token."
-            });
-        }
-
-        if (response.status === 403) {
-            console.error('Access forbidden - check token permissions');
-            return res.json({
-                success: false, 
-                message: "API key doesn't have required permissions. Enable 'Make calls to Inference Providers'."
-            });
-        }
 
         if (response.status === 503) {
-            console.log('Model is loading...');
             return res.json({
                 success: false, 
-                message: "AI model is warming up. Please wait 15 seconds and click Generate again."
+                message: "AI model is loading. Please wait 20 seconds and try again."
             });
         }
 
         if (response.status !== 200) {
-            console.error('Unexpected status:', response.status);
-            const errorText = Buffer.from(response.data).toString('utf8');
-            console.error('Error response:', errorText);
+            console.error('Error status:', response.status);
             return res.json({
                 success: false, 
-                message: `API returned status ${response.status}. Please try again.`
+                message: `Failed with status ${response.status}. Please try again.`
             });
         }
-
-        // Check if we got actual image data
-        if (!response.data || response.data.byteLength === 0) {
-            console.error('Empty response data');
-            return res.json({
-                success: false, 
-                message: "Received empty response. Model might be loading, try again."
-            });
-        }
-
-        console.log('Image data size:', response.data.byteLength, 'bytes');
 
         // Convert to base64
         const base64Image = `data:image/png;base64,${Buffer.from(response.data, 'binary').toString('base64')}`;
-        console.log('Base64 image created, length:', base64Image.length);
 
         // Upload to Cloudinary
-        console.log('Uploading to Cloudinary...');
         const {secure_url} = await cloudinary.uploader.upload(base64Image);
-        console.log('Cloudinary URL:', secure_url);
 
         // Save to database
         await sql` INSERT INTO creations (user_id, prompt, content, type, publish) 
         VALUES (${userId}, ${prompt}, ${secure_url}, 'image', ${publish ?? false })`;
 
-        console.log('=== Image generation successful! ===');
+        console.log('Image generated successfully!');
 
         res.json({ 
             success: true, 
@@ -204,39 +162,26 @@ export const generateImage = async (req, res)=>{
         })
 
     } catch (error) {
-        console.error('=== Image generation error ===');
-        console.error('Error type:', error.constructor.name);
-        console.error('Error message:', error.message);
-        console.error('Error code:', error.code);
+        console.error('Image generation error:', error.message);
+        console.error('Error details:', error.response?.status, error.response?.statusText);
         
-        if (error.response) {
-            console.error('Response status:', error.response.status);
-            console.error('Response statusText:', error.response.statusText);
-            try {
-                const errorText = Buffer.from(error.response.data).toString('utf8');
-                console.error('Response data:', errorText);
-            } catch (e) {
-                console.error('Could not parse error response');
-            }
-        }
-        
-        if (error.code === 'ECONNABORTED') {
+        if (error.response?.status === 503) {
             return res.json({
                 success: false, 
-                message: "Request timeout. Model is loading. Wait 20 seconds and try again."
+                message: "Model is loading. Wait 20 seconds and try again."
             });
         }
 
-        if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED') {
+        if (error.response?.status === 401 || error.response?.status === 403) {
             return res.json({
                 success: false, 
-                message: "Cannot reach Hugging Face API. Check your internet connection."
+                message: "Invalid API key. Check Vercel environment variables."
             });
         }
         
         res.json({
             success: false, 
-            message: `Generation failed: ${error.message}`
+            message: "Failed to generate image. Please try again."
         });
     }
 }
