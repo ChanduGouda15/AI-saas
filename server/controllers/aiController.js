@@ -107,44 +107,72 @@ export const generateImage = async (req, res)=>{
             return res.json({ success: false, message: "This feature is only available for premium subscriptions"})
         }
 
-        console.log('🎨 Generating image with Replicate for:', prompt);
+        console.log('🎨 Generating FREE image for:', prompt);
 
-        const replicate = new Replicate({
-            auth: process.env.REPLICATE_API_TOKEN,
-        });
-
-        const output = await replicate.run(
-            "black-forest-labs/flux-schnell",
-            {
-                input: {
-                    prompt: prompt,
-                    num_outputs: 1,
-                    aspect_ratio: "1:1",
-                    output_format: "png",
-                    output_quality: 80
+        // Using CompVis/stable-diffusion-v1-4 - Always free, no payment needed
+        const response = await axios.post(
+            'https://api-inference.huggingface.co/models/CompVis/stable-diffusion-v1-4',
+            { 
+                inputs: prompt,
+                options: {
+                    wait_for_model: true
                 }
+            },
+            {
+                headers: {
+                    'Content-Type': 'application/json',
+                    // No Authorization needed for public models!
+                },
+                responseType: 'arraybuffer',
+                timeout: 120000
             }
         );
 
-        console.log('✅ Image generated successfully');
+        console.log('Response status:', response.status);
 
-        const imageUrl = output[0];
-        const {secure_url} = await cloudinary.uploader.upload(imageUrl);
+        if (response.status === 503) {
+            return res.json({
+                success: false, 
+                message: "AI model is warming up. Please wait 20 seconds and try again."
+            });
+        }
 
+        if (response.status !== 200) {
+            throw new Error(`Status ${response.status}`);
+        }
+
+        // Convert to base64
+        const base64Image = `data:image/png;base64,${Buffer.from(response.data, 'binary').toString('base64')}`;
+
+        console.log('✅ Image generated, uploading to Cloudinary...');
+
+        // Upload to Cloudinary
+        const {secure_url} = await cloudinary.uploader.upload(base64Image);
+
+        // Save to database
         await sql` INSERT INTO creations (user_id, prompt, content, type, publish) 
         VALUES (${userId}, ${prompt}, ${secure_url}, 'image', ${publish ?? false })`;
+
+        console.log('✅ Success! Image saved:', secure_url);
 
         res.json({ success: true, content: secure_url})
 
     } catch (error) {
-        console.error('❌ Image generation error:', error.message);
+        console.error('❌ Error:', error.message);
+        
+        if (error.response?.status === 503) {
+            return res.json({
+                success: false, 
+                message: "Model is loading. Wait 20 seconds and try again."
+            });
+        }
+        
         res.json({
             success: false, 
-            message: error.message || "Failed to generate image"
+            message: "Failed to generate image. Please try again."
         });
     }
 }
-
 
 
 export const removeImageBackground = async (req, res)=>{
