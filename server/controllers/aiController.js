@@ -5,6 +5,7 @@ import axios from "axios";
 import { v2 as cloudinary } from "cloudinary";
 import fs from 'fs'
 import pdf from 'pdf-parse/lib/pdf-parse.js'
+import Replicate from 'replicate';
 
 const AI = new OpenAI({
     apiKey: process.env.GEMINI_API_KEY,
@@ -106,82 +107,40 @@ export const generateImage = async (req, res)=>{
             return res.json({ success: false, message: "This feature is only available for premium subscriptions"})
         }
 
-        console.log('Generating image for prompt:', prompt);
+        console.log('🎨 Generating image with Replicate for:', prompt);
 
-        // Using runwayml/stable-diffusion-v1-5 (always available, no 404)
-        const response = await axios.post(
-            'https://api-inference.huggingface.co/models/runwayml/stable-diffusion-v1-5',
-            { 
-                inputs: prompt,
-                options: {
-                    wait_for_model: true
-                }
-            },
+        const replicate = new Replicate({
+            auth: process.env.REPLICATE_API_TOKEN,
+        });
+
+        const output = await replicate.run(
+            "black-forest-labs/flux-schnell",
             {
-                headers: {
-                    'Authorization': `Bearer ${process.env.HUGGINGFACE_API_KEY}`,
-                    'Content-Type': 'application/json',
-                },
-                responseType: 'arraybuffer',
-                timeout: 120000
+                input: {
+                    prompt: prompt,
+                    num_outputs: 1,
+                    aspect_ratio: "1:1",
+                    output_format: "png",
+                    output_quality: 80
+                }
             }
         );
 
-        console.log('Response status:', response.status);
+        console.log('✅ Image generated successfully');
 
-        if (response.status === 503) {
-            return res.json({
-                success: false, 
-                message: "AI model is loading. Please wait 20 seconds and try again."
-            });
-        }
+        const imageUrl = output[0];
+        const {secure_url} = await cloudinary.uploader.upload(imageUrl);
 
-        if (response.status !== 200) {
-            console.error('Error status:', response.status);
-            return res.json({
-                success: false, 
-                message: `Failed with status ${response.status}. Please try again.`
-            });
-        }
-
-        // Convert to base64
-        const base64Image = `data:image/png;base64,${Buffer.from(response.data, 'binary').toString('base64')}`;
-
-        // Upload to Cloudinary
-        const {secure_url} = await cloudinary.uploader.upload(base64Image);
-
-        // Save to database
         await sql` INSERT INTO creations (user_id, prompt, content, type, publish) 
         VALUES (${userId}, ${prompt}, ${secure_url}, 'image', ${publish ?? false })`;
 
-        console.log('Image generated successfully!');
-
-        res.json({ 
-            success: true, 
-            content: secure_url
-        })
+        res.json({ success: true, content: secure_url})
 
     } catch (error) {
-        console.error('Image generation error:', error.message);
-        console.error('Error details:', error.response?.status, error.response?.statusText);
-        
-        if (error.response?.status === 503) {
-            return res.json({
-                success: false, 
-                message: "Model is loading. Wait 20 seconds and try again."
-            });
-        }
-
-        if (error.response?.status === 401 || error.response?.status === 403) {
-            return res.json({
-                success: false, 
-                message: "Invalid API key. Check Vercel environment variables."
-            });
-        }
-        
+        console.error('❌ Image generation error:', error.message);
         res.json({
             success: false, 
-            message: "Failed to generate image. Please try again."
+            message: error.message || "Failed to generate image"
         });
     }
 }
