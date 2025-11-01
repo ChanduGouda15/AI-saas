@@ -106,41 +106,67 @@ export const generateImage = async (req, res)=>{
             return res.json({ success: false, message: "This feature is only available for premium subscriptions"})
         }
 
-        // Using Picsum Photos + Cloudinary transformations to create unique images
-        // This will work immediately without any API keys
-        const randomSeed = Math.floor(Math.random() * 1000);
-        const tempImageUrl = `https://picsum.photos/seed/${randomSeed}/1024/1024`;
+        console.log('Generating image for prompt:', prompt);
 
-        // Upload to Cloudinary with text overlay of the prompt
-        const {secure_url} = await cloudinary.uploader.upload(tempImageUrl, {
-            transformation: [
-                {
-                    overlay: {
-                        font_family: "Arial",
-                        font_size: 40,
-                        text: prompt.substring(0, 50)
-                    },
-                    color: "white",
-                    gravity: "south",
-                    y: 50
-                },
-                {
-                    effect: "blur:300"
+        // Using Stable Diffusion XL via Hugging Face (Free tier: 1000 requests/month)
+        const response = await axios.post(
+            'https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0',
+            { 
+                inputs: prompt,
+                parameters: {
+                    negative_prompt: "blurry, bad quality, distorted"
                 }
-            ]
-        });
+            },
+            {
+                headers: {
+                    'Authorization': `Bearer ${process.env.HUGGINGFACE_API_KEY}`,
+                    'Content-Type': 'application/json',
+                },
+                responseType: 'arraybuffer',
+                timeout: 60000
+            }
+        );
+
+        // Handle model loading state
+        if (response.status === 503) {
+            return res.json({
+                success: false, 
+                message: "AI model is loading. Please wait 20 seconds and try again."
+            });
+        }
+
+        // Convert to base64
+        const base64Image = `data:image/png;base64,${Buffer.from(response.data, 'binary').toString('base64')}`;
+
+        // Upload to Cloudinary
+        const {secure_url} = await cloudinary.uploader.upload(base64Image);
 
         await sql` INSERT INTO creations (user_id, prompt, content, type, publish) 
         VALUES (${userId}, ${prompt}, ${secure_url}, 'image', ${publish ?? false })`;
 
-        res.json({ 
-            success: true, 
-            content: secure_url
-        })
+        res.json({ success: true, content: secure_url})
 
     } catch (error) {
-        console.log('Image generation error:', error.message)
-        res.json({success: false, message: error.message || "Failed to generate image"})
+        console.log('Image generation error:', error.response?.data || error.message);
+        
+        if (error.response?.status === 503) {
+            return res.json({
+                success: false, 
+                message: "Model is loading. Wait 20 seconds and try again."
+            });
+        }
+
+        if (error.message.includes('timeout')) {
+            return res.json({
+                success: false, 
+                message: "Request timeout. Please try again."
+            });
+        }
+        
+        res.json({
+            success: false, 
+            message: "Failed to generate image. Please try again."
+        });
     }
 }
 
